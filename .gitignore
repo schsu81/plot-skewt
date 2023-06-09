@@ -1,0 +1,8 @@
+*.mod
+*.so
+*.exe
+*test*
+*.png
+*.sw*
+__pycache__
+*.pyc
