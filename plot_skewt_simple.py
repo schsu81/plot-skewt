@@ -59,7 +59,7 @@ if __name__ == '__main__':
     print('Surface parcel')
     parcel0 = ax.data['parcel']
     ax.plotdata('parcel',color='black',linewidth=2.0)
-    for key in ['LCL','CCL','LFC','EL']:
+    for key in ['state','LCL','CCL','LFC','EL']:
       print(f'  {key}=',ax.data[key]) # or parcel0[key]
       ax.plotdata(key,'*',color='purple',ms=7,zorder=20)
 
@@ -75,14 +75,23 @@ if __name__ == '__main__':
       #ax.plotdata('CAPE',facecolor='none',hatch='++',zorder=2)
       ax.plotdata('CAPE',facecolor='red',alpha=0.3,zorder=2)
     #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-    print('Specific parcel')
-    parcel1 = ax.data.get_parcel(925.)
-    ax.plot(parcel1['T'],parcel1['P'],color='cyan',linewidth=2.)
-    for key in ['LCL','CCL','LFC','EL']:
-      print(f'  {key}=',parcel1[key])
-    print('  CIN=' ,parcel1['CIN']['value'])
-    print('  CAPE=',parcel1['CAPE']['value'])
+    #print('Specific parcel')
+    #parcel1 = ax.data.get_parcel(925.)
+    #ax.plot(parcel1['T'],parcel1['P'],color='cyan',linewidth=2.)
+    #for key in ['state','LCL','CCL','LFC','EL']:
+    #  print(f'  {key}=',parcel1[key])
+    #print('  CIN=' ,parcel1['CIN']['value'])
+    #print('  CAPE=',parcel1['CAPE']['value'])
     #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+    print('Inverse specific parcel')
+    #parcel2 = ax.data.get_parcel(parcel1['EL']['P'],inverse=True)
+    parcel2 = ax.data.get_parcel(848.8,inverse=True)
+    #parcel2 = ax.data.get_parcel(250.,inverse=True)
+    ax.plot(parcel2['T'],parcel2['P'],color='cyan',linewidth=2.)
+    for key in ['state','LCL','CCL','LFC','EL']:
+      print(f'  {key}=',parcel2[key])
+    print('  CIN=' ,parcel2['CIN']['value'])
+    print('  CAPE=',parcel2['CAPE']['value'])
 
     plt.show()
 

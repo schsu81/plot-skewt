@@ -28,12 +28,8 @@ class soundingdata(dict):
         break
 
     self['parcel'] = self.get_parcel(P[i])
-    self['LCL' ] = self['parcel']['LCL' ]
-    self['CCL' ] = self['parcel']['CCL' ]
-    self['LFC' ] = self['parcel']['LFC' ]
-    self['EL'  ] = self['parcel']['EL'  ]
-    self['CIN' ] = self['parcel']['CIN' ]
-    self['CAPE'] = self['parcel']['CAPE']
+    for key in ['state','LCL','CCL','LFC','EL','CIN','CAPE']:
+      self[key] = self['parcel'][key]
     self._com_indexes()
     self._com_qpf()
   #--------------------------------------------------------------------------
@@ -115,8 +111,8 @@ class soundingdata(dict):
     Td = self['Td'][:i]
     self['QPF'] = np.trapz(-satured_sh(P,Td)/g,P*100.)
   #--------------------------------------------------------------------------
-  def get_parcel(self,Pstart,Pend=100.,N=1000):
-    return parcel(self['P'],self['T'],self['Td'],self['H'],Pstart,Pend,N)
+  def get_parcel(self,Pstart,Pend=100.,N=1000,inverse=False):
+    return parcel(self['P'],self['T'],self['Td'],self['H'],Pstart,Pend,N,inverse)
 #============================================================================
 class energy(dict):
   def __init__(self,P=np.nan,Ta=np.nan,Te=np.nan,H=np.nan):
@@ -142,20 +138,25 @@ class level(dict):
     self['H'] = float(H)
 #============================================================================
 class parcel(dict):
-  def __init__(self,P,T,Td,H,Pstart,Pend,N):
+  def __init__(self,P,T,Td,H,Pstart,Pend,N,inverse):
+    self['state'] = level(np.nan,np.nan,np.nan)
     self['LCL' ] = level(np.nan,np.nan,np.nan)
     self['CCL' ] = level(np.nan,np.nan,np.nan)
     self['LFC' ] = level(np.nan,np.nan,np.nan)
     self['EL'  ] = level(np.nan,np.nan,np.nan)
     self['CAPE'] = energy()
     self['CIN']  = energy()
-    hasH = not np.isnan(H).all()
-    hasLFC = False
-    hasEL  = False
+    self['hasH'] = not np.isnan(H).all()
+    self['hasLCL'] = False
+    self['hasCCL'] = False
+    self['hasLFC'] = False
+    self['hasEL' ] = False
+
+    NN = len(P)
     P  = np.array(P ,dtype=float)
     T  = np.array(T ,dtype=float)
     Td = np.array(Td,dtype=float)
-    if hasH:
+    if self['hasH']:
       H = np.array(H,dtype=float)
 
     if Pstart in P:
@@ -163,115 +164,194 @@ class parcel(dict):
       P_s    = P [i0] # start P
       T_s_c  = T [i0] # start T in c
       Td_s_c = Td[i0] # start Td in c
-      if hasH:
+      if self['hasH']:
         H_s = H[i0]  # start H
     else:
       i0 = sum((P-Pstart)>0.)
       P_s    = Pstart
       T_s_c  = inter_logpT(P[i0-1],T [i0-1],P[i0],T [i0],P_s)
       Td_s_c = inter_logpT(P[i0-1],Td[i0-1],P[i0],Td[i0],P_s)
-      if hasH:
+      if self['hasH']:
         H_s = hyd(H[i0-1],T[i0-1],H[i0],T[i0],P_s,inname='P')
 
-    # LCL
-    Tlcl = com_Tic(T_s_c,Td_s_c)
-    Plcl = adiabatic_dry(P_s,T_s_c,Tlcl,inname='T') 
+    if inverse:
+      # find lcl and bottom
+      ib = 0
+      Tlcl = com_Tic(T[ib],Td[ib])
+      Plcl   = adiabatic_dry   (P[ib],T[ib],Tlcl,inname='T')
+      Tlcls  = adiabatic_pseudo(P_s  ,T_s_c,Plcl,inname='P',guess=Tlcl)
+      dT     = Tlcls-Tlcl
+      if dT == 0.:
+        P_b    = P [ib]
+        T_b_c  = T [ib]
+        Td_b_c = Td[ib]
+        self['hasLCL'] = True
+      else:
+        for ib in range(1,NN):
+          ldT    = dT
+          Tlcl   = com_Tic(T[ib],Td[ib])
+          Plcl   = adiabatic_dry   (P[ib],T[ib],Tlcl,inname='T')
+          Tlcls  = adiabatic_pseudo(P_s  ,T_s_c,Plcl,inname='P',guess=Tlcl)
+          dT     = Tlcls-Tlcl
+          if ldT*dT<=0.:
+            self['hasLCL'] = True
+            ib -= 1
+            break
+          if P[ib]<P_s:
+            ib = 0
+            P_b = P[0]
+            T_b_c = adiabatic_pseudo(P_s,T_s_c,P_b,inname='P',guess=T[0])
+            break
+        if self['hasLCL']:
+          step   = (P[ib+1]-P[ib])/10.
+          P_b    = P[ib]
+          T_b_c  = inter_logpT(P[ib],T [ib],P[ib+1],T [ib+1],P_b)
+          Td_b_c = inter_logpT(P[ib],Td[ib],P[ib+1],Td[ib+1],P_b)
+          Tlcl   = com_Tic(T_b_c,Td_b_c)
+          Plcl   = adiabatic_dry   (P_b,T_b_c,Tlcl,inname='T')
+          Tlcls  = adiabatic_pseudo(P_s,T_s_c,Plcl,inname='P',guess=Tlcl)
+          dT     = np.abs(Tlcls-Tlcl)
+          t   = 0
+          while (dT>=0.001) and (t<1000) :
+            ldT = dT
+            P_b   += step
+            T_b_c  = inter_logpT(P[ib],T [ib],P[ib+1],T [ib+1],P_b)
+            Td_b_c = inter_logpT(P[ib],Td[ib],P[ib+1],Td[ib+1],P_b)
+            Tlcl   = com_Tic(T_b_c,Td_b_c)
+            Plcl   = adiabatic_dry   (P_b,T_b_c,Tlcl,inname='T')
+            Tlcls  = adiabatic_pseudo(P_s,T_s_c,Plcl,inname='P',guess=Tlcl)
+            dT = np.abs(Tlcls-Tlcl)
+            if dT>ldT:
+              step = -step/10.
+            t  +=1
+    else:
+      ib     = i0
+      P_b    = P_s
+      T_b_c  = T_s_c
+      Td_b_c = Td_s_c
+      # LCL
+      self['hasLCL'] = True
+      Tlcl = com_Tic(T_s_c,Td_s_c)
+      Plcl = adiabatic_dry(P_s,T_s_c,Tlcl,inname='T') 
 
     # CCL
-    mr  = satured_mr(P_s,Td_s_c)
-    mr0 = satured_mr(P_s,T_s_c)
-    for i in range(i0+1,len(P)):
-      mr1 = satured_mr(P[i],T[i])
-      if (mr<=mr0) and (mr>mr1):
-        deta = (Plcl-P_s)*(T[i]-T[i-1]) - (P[i]-P[i-1])*(Tlcl-Td_s_c)
-        if abs(deta)>0:
-          deta = ( (P[i-1]-P_s)*(Tlcl-Td_s_c)-(Plcl-P_s)*(T[i-1]-Td_s_c) )/deta
-          Tccl = T[i-1]+(T[i]-T[i-1])*deta 
-          Pccl = P[i-1]+(P[i]-P[i-1])*deta
-          self['CCL']['T'] = float(Tccl)
-          self['CCL']['P'] = float(Pccl)
-          if hasH:
-            Hccl = inter_hydH(P[i-1:i+1],T[i-1:i+1],H[i-1:i+1],Pccl,Tccl)
-            self['CCL']['H'] = float(Hccl)
-        del deta
-        break
-      mr0 = mr1
-    del mr,mr0,mr1
+    if self['hasLCL']:
+      self['hasCCL'] = True
+      mr  = satured_mr(P_b,Td_b_c)
+      mr0 = satured_mr(P_b,T_b_c)
+      for i in range(ib+1,NN):
+        mr1 = satured_mr(P[i],T[i])
+        if (mr<=mr0) and (mr>mr1):
+          deta = (Plcl-P_b)*(T[i]-T[i-1]) - (P[i]-P[i-1])*(Tlcl-Td_b_c)
+          if abs(deta)>0:
+            deta = ( (P[i-1]-P_b)*(Tlcl-Td_b_c)-(Plcl-P_b)*(T[i-1]-Td_b_c) )/deta
+            Tccl = T[i-1]+(T[i]-T[i-1])*deta 
+            Pccl = P[i-1]+(P[i]-P[i-1])*deta
+            self['CCL']['T'] = float(Tccl)
+            self['CCL']['P'] = float(Pccl)
+            if self['hasH']:
+              Hccl = inter_hydH(P[i-1:i+1],T[i-1:i+1],H[i-1:i+1],Pccl,Tccl)
+              self['CCL']['H'] = float(Hccl)
+          del deta
+          break
+        mr0 = mr1
+      del mr,mr0,mr1
 
     # compute profile
-    TP    = max(P[-1],Pend)
-    P_a   = np.logspace(np.log10(Pstart),np.log10(TP),N,dtype=float) # P profile
-    T_e_c = np.full(len(P_a),np.nan,dtype=float) # T environment profile in c
-    T_a_c = np.full(len(P_a),np.nan,dtype=float) # T air parcel profile in c
-    H_a   = np.full(len(P_a),np.nan,dtype=float) # H profile
-
-    P_a[0],T_e_c[0],T_a_c[0] = P_s,T_s_c,T_s_c
-    if hasH:
-      H_a[0] = H_s
+    if inverse:
+      TP = P_s
+    else:
+      TP = max(P[-1],Pend)
+    P_a   = np.logspace(np.log10(P_b),np.log10(TP),N,dtype=float) # P profile
+    T_e_c = np.full(P_a.shape[0],np.nan,dtype=float) # T environment profile in c
+    T_a_c = np.full(P_a.shape[0],np.nan,dtype=float) # T air parcel profile in c
+    H_a   = np.full(P_a.shape[0],np.nan,dtype=float) # H profile
+    P_a[0],T_e_c[0],T_a_c[0] = P_b,T_b_c,T_b_c
+    self['state']['P'] = P_a  [0]
+    self['state']['T'] = T_a_c[0]
+    if self['hasH']:
+      H_a[0] = inter_hydH(P[ib:ib+2],T[ib:ib+2],H[ib:ib+2],P_b,T_b_c) 
+      self['state']['H'] = H_a  [0]
 
     j = 0
-    for i in range(1,len(P_a)):
-      while j<len(P)-1:
+    for i in range(1,P_a.shape[0]):
+      while j<NN-1:
         if (P_a[i]<P[j]) and (P_a[i]>=P[j+1]):
           T_e_c[i] = inter_logpT(P[j],T[j],P[j+1],T[j+1],P_a[i])
-          if P_a[i]>=Plcl:
-            T_a_c[i] = adiabatic_dry(P_s,T_s_c,P_a[i],inname='P')
-          else:
-            T_a_c[i] = adiabatic_pseudo(Plcl,Tlcl,P_a[i],inname='P',guess=T_a_c[i-1])
-          if hasH:
+          if self['hasLCL']:
+            if P_a[i]>=Plcl:
+              T_a_c[i] = adiabatic_dry(Plcl,Tlcl,P_a[i],inname='P')
+            else:
+              T_a_c[i] = adiabatic_pseudo(Plcl,Tlcl,P_a[i],inname='P',guess=T_a_c[i-1])
+          else: # happen in inverse
+            T_a_c[i] = adiabatic_pseudo(P_s,T_s_c,P_a[i],inname='P',guess=T_a_c[i-1])
+          if self['hasH']:
             H_a[i] = inter_hydH(P[j:j+2],T[j:j+2],H[j:j+2],P_a[i],T_a_c[i])
           break
         else:
           j+=1
 
     # insert LCL
-    i = np.where(P_a-Plcl<0.)[0][0]
-    ilcl = i.copy()
-    if hasH:
-      Hlcl = inter_hydH(P_a[i-1:i+1],T_e_c[i-1:i+1],H_a[i-1:i+1],Plcl,Tlcl)
-      H_a   = np.insert(H_a,ilcl,Hlcl)
-      self['LCL']['H'] = H_a[ilcl]
-    T_e_c = np.insert(T_e_c,ilcl,inter_logpT(P_a[i-1],T_e_c[i-1],P_a[i],T_e_c[i],Plcl))
-    P_a   = np.insert(P_a  ,ilcl,Plcl)
-    T_a_c = np.insert(T_a_c,ilcl,Tlcl)
-    self['LCL']['P'] = P_a  [ilcl]
-    self['LCL']['T'] = T_a_c[ilcl]
+    if self['hasLCL']:
+      i = np.where(P_a-Plcl<0.)[0][0]
+      ilcl = i.copy()
+      if self['hasH']:
+        Hlcl = inter_hydH(P_a[i-1:i+1],T_e_c[i-1:i+1],H_a[i-1:i+1],Plcl,Tlcl)
+        H_a   = np.insert(H_a,ilcl,Hlcl)
+        self['LCL']['H'] = H_a[ilcl]
+      T_e_c = np.insert(T_e_c,ilcl,inter_logpT(P_a[i-1],T_e_c[i-1],P_a[i],T_e_c[i],Plcl))
+      P_a   = np.insert(P_a  ,ilcl,Plcl)
+      T_a_c = np.insert(T_a_c,ilcl,Tlcl)
+      self['LCL']['P'] = P_a  [ilcl]
+      self['LCL']['T'] = T_a_c[ilcl]
 
-    # insert LFC
-    i, = np.where(T_a_c-T_e_c>0.)
-    if i.shape[0] != 0:
-      hasLFC = True
-      i    = i[0]
-      ilfc = i.copy()
-      Plfc,Tlfc,Telfc = self._inter_level(P_a[i-1:i+1],T_a_c[i-1:i+1],T_e_c[i-1:i+1],Plcl,Tlcl)
-      if hasH:
-        Hlfc = inter_hydH(P_a[i-1:i+1],T_e_c[i-1:i+1],H_a[i-1:i+1],Plfc,Tlfc)
-        H_a   = np.insert(H_a,ilfc,Hlfc)
-        self['LFC']['H'] = H_a[ilfc]
-      T_e_c = np.insert(T_e_c,ilfc,Tlfc)
-      P_a   = np.insert(P_a  ,ilfc,Plfc)
-      T_a_c = np.insert(T_a_c,ilfc,Tlfc)
-      self['LFC']['P'] = P_a  [ilfc] 
-      self['LFC']['T'] = T_a_c[ilfc]
-      self['CIN']  = energy(P_a[:ilfc+1],T_a_c[:ilfc+1],T_e_c[:ilfc+1],H_a[:ilfc+1])
-
-      # insert EL
-      i, = np.where(T_a_c[ilfc+1:]-T_e_c[ilfc+1:]<0.)
+      # insert LFC
+      i, = np.where(T_a_c[ilcl+1:]-T_e_c[ilcl+1:]>=0.)
       if i.shape[0] != 0:
-        hasEL = True
-        i    = i[0] + ilfc+1
-        iel = i.copy()
-        Pel,Tel,Teel = self._inter_level(P_a[i-1:i+1],T_a_c[i-1:i+1],T_e_c[i-1:i+1],Plcl,Tlcl)
-        if hasH:
-          Hel = inter_hydH(P_a[i-1:i+1],T_e_c[i-1:i+1],H_a[i-1:i+1],Pel,Tel)
-          H_a   = np.insert(H_a,iel,Hel)
-          self['EL']['H'] = H_a[iel] 
-        T_e_c = np.insert(T_e_c,iel,Tel)
-        P_a   = np.insert(P_a  ,iel,Pel)
-        T_a_c = np.insert(T_a_c,iel,Tel)
-        self['EL']['P'] = P_a  [iel] 
-        self['EL']['T'] = T_a_c[iel] 
-        self['CAPE'] = energy(P_a[ilfc:iel +1],T_a_c[ilfc:iel +1],T_e_c[ilfc:iel +1],H_a[ilfc:iel +1])
+        self['hasLFC'] = True
+        i    = i[0] + ilcl+1
+        ilfc = i.copy()
+        Plfc,Tlfc,Telfc = self._inter_level(P_a[i-1:i+1],T_a_c[i-1:i+1],T_e_c[i-1:i+1],Plcl,Tlcl)
+        if self['hasH']:
+          Hlfc = inter_hydH(P_a[i-1:i+1],T_e_c[i-1:i+1],H_a[i-1:i+1],Plfc,Tlfc)
+          H_a   = np.insert(H_a,ilfc,Hlfc)
+        T_e_c = np.insert(T_e_c,ilfc,Tlfc)
+        P_a   = np.insert(P_a  ,ilfc,Plfc)
+        T_a_c = np.insert(T_a_c,ilfc,Tlfc)
+      elif inverse:
+        self['hasLFC'] = True
+        ilfc = P_a.shape[0]-1
+
+      if self['hasLFC']:
+        self['LFC']['P'] = P_a  [ilfc] 
+        self['LFC']['T'] = T_a_c[ilfc]
+        if self['hasH']:
+          self['LFC']['H'] = H_a[ilfc]
+        self['CIN']  = energy(P_a[:ilfc+1],T_a_c[:ilfc+1],T_e_c[:ilfc+1],H_a[:ilfc+1])
+
+        # EL
+        i, = np.where(T_a_c[ilfc+1:]-T_e_c[ilfc+1:]<=0.)
+        if i.shape[0] != 0:
+          self['hasEL'] = True
+          i    = i[0] + ilfc+1
+          iel = i.copy()
+          Pel,Tel,Teel = self._inter_level(P_a[i-1:i+1],T_a_c[i-1:i+1],T_e_c[i-1:i+1],Plcl,Tlcl)
+          if self['hasH']:
+            Hel = inter_hydH(P_a[i-1:i+1],T_e_c[i-1:i+1],H_a[i-1:i+1],Pel,Tel)
+            H_a   = np.insert(H_a,iel,Hel)
+          T_e_c = np.insert(T_e_c,iel,Tel)
+          P_a   = np.insert(P_a  ,iel,Pel)
+          T_a_c = np.insert(T_a_c,iel,Tel)
+        elif inverse and (ilfc!=P_a.shape[0]-1):
+          self['hasEL'] = True
+          iel = P_a.shape[0]-1
+        if self['hasEL']:
+          self['EL']['P'] = P_a  [iel] 
+          self['EL']['T'] = T_a_c[iel] 
+          if self['hasH']:
+            self['EL']['H'] = H_a[iel]
+          self['CAPE'] = energy(P_a[ilfc:iel +1],T_a_c[ilfc:iel +1],T_e_c[ilfc:iel +1],H_a[ilfc:iel +1])
+
 
     self['P'] = P_a
     self['T'] = T_a_c
@@ -394,6 +474,7 @@ def inter_hydH(p,t,h,pl,tl):
 #%%---------------------------------------------------------------------
 def inter_logpT(p0,t0,p1,t1,p):
   return t0+(t1-t0)/np.log(p1/p0)*np.log(p/p0)
+  #return t0+(t1-t0)/(p1-p0)*(p-p0)
 #%%=====================================================================
 def saturated_ratio(mr,var,inname='P'):
   # T in C
