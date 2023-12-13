@@ -534,6 +534,8 @@ def adiabatic_pseudo(Ps,Ts,invars,inname='P',guess=None):
           diff = theta2thetaE(vs[i],out[i])-Tes
           if abs(diff)>abs(ldiff):
             det /= -10.
+          elif (diff==ldiff):
+            break
           ldiff = diff    
           loops +=1  
     case 'T': # out P
