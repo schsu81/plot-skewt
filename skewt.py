@@ -7,7 +7,7 @@ Cp      = 1004.86
 epsilon = 0.622
 #============================================================================
 class soundingdata(dict):
-  def __init__(self,P,T,Td,H=None,WS=None,WD=None,U=None,V=None):
+  def __init__(self,P,T,Td,H=None,WS=None,WD=None,U=None,V=None,N=1000):
     self['P' ] = np.array(P ,dtype=float)
     self['T' ] = np.array(T ,dtype=float)
     self['Td'] = np.array(Td,dtype=float)
@@ -27,7 +27,7 @@ class soundingdata(dict):
       if not np.isnan(T[i]):
         break
 
-    self['parcel'] = self.get_parcel(P[i])
+    self['parcel'] = self.get_parcel(P[i],N=N)
     for key in ['state','LCL','CCL','LFC','EL','CIN','CAPE']:
       self[key] = self['parcel'][key]
     self._com_indexes()
@@ -50,7 +50,7 @@ class soundingdata(dict):
         WS850, WD850  = self['WS'][i]*1.94, self['WD'][i]
     else:
       for i in range(i,N-1):
-        if (P[i]>=850.) and (P[i]<850.):
+        if (P[i]>=850.) and (P[i+1]<850.):
           T850  = inter_logpT(P[i],T [i],P[i+1],T [i+1],850.)
           Td850 = inter_logpT(P[i],Td[i],P[i+1],Td[i+1],850.)
           break
@@ -60,7 +60,7 @@ class soundingdata(dict):
       T700, Td700  = T[i],Td[i]
     else:
       for i in range(i,N-1):
-        if (P[i]>=700.) and (P[i]<700.):
+        if (P[i]>=700.) and (P[i+1]<700.):
           T700  = inter_logpT(P[i],T [i],P[i+1],T [i+1],700.)
           Td700 = inter_logpT(P[i],Td[i],P[i+1],Td[i+1],700.)
           break
@@ -72,7 +72,7 @@ class soundingdata(dict):
         WS500, WD500  = self['WS'][i]*1.94, self['WD'][i]
     else:
       for i in range(i,N-1):
-        if (P[i]>=500.) and (P[i]<500.):
+        if (P[i]>=500.) and (P[i+1]<500.):
           T500  = inter_logpT(P[i],T [i],P[i+1],T [i+1],500.)
           Td500 = inter_logpT(P[i],Td[i],P[i+1],Td[i+1],500.)
           break
@@ -361,20 +361,21 @@ class parcel(dict):
   #--------------------------------------------------------------------------
   def _inter_level(self,Pa,Ta,Te,Plcl,Tlcl):
     deta = (Ta[1]-Ta[0])-(Te[1]-Te[0])
-    if deta!=0.:
-      deta = (Te[0]-Ta[0])/deta
-      Pa0  = np.exp( np.log(Pa[0]) + deta*np.log(Pa[1]/Pa[0]) )
-      Te0  =                Ta[0]  + deta*(      Ta[1]-Ta[0])
-      Ta0  = adiabatic_pseudo(Plcl,Tlcl,Pa0,inname='P',guess=Ta[0])
-
-      deta = (Te[0]-Ta[0])/( (Ta0-Ta[0])-(Te0-Te[0]) )
-      Pa1  = np.exp( np.log(Pa[0]) + deta*(np.log(Pa0/Pa[0])) )
-      Te1  =                Ta[0]  + deta*(       Ta0-Ta[0])
-      Ta1  = adiabatic_pseudo(Plcl,Tlcl,Pa1,inname='P',guess=Ta0)
-      #print(Te1,Ta1)
-      return Pa1,Ta1,Te1
-    else:
+    if deta==0.:
       return [np.nan]*3
+    deta = (Te[0]-Ta[0])/deta
+    Pa0  = np.exp( np.log(Pa[0]) + deta*np.log(Pa[1]/Pa[0]) )
+    Te0  =                Ta[0]  + deta*(      Ta[1]-Ta[0])
+    Ta0  = adiabatic_pseudo(Plcl,Tlcl,Pa0,inname='P',guess=Ta[0])
+
+    if deta==0.:
+      return [np.nan]*3
+    deta = (Te[0]-Ta[0])/( (Ta0-Ta[0])-(Te0-Te[0]) )
+    Pa1  = np.exp( np.log(Pa[0]) + deta*(np.log(Pa0/Pa[0])) )
+    Te1  =                Ta[0]  + deta*(       Ta0-Ta[0])
+    Ta1  = adiabatic_pseudo(Plcl,Tlcl,Pa1,inname='P',guess=Ta0)
+    #print(Te1,Ta1)
+    return Pa1,Ta1,Te1
 #============================================================================
 def uv2wd(inu,inv):
   u  = inu
@@ -443,7 +444,7 @@ def com_Tic(T,Td): # isentropic condensation temperature[C]
   return 1./(1./(Tdk-56.)+np.log(Tk/Tdk)/800.) +56. -273.15
 #%%---------------------------------------------------------------------
 # current not used
-#def com_cwb_integral(x,y):
+#def com_cwa_integral(x,y):
 #  # parabolic curved fitting.
 #  def _rsum(x,y,p,q):
 #    dx  = np.array([x[0]-x[1],x[0]-x[2],x[1]-x[2]])
