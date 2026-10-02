@@ -8,6 +8,7 @@ epsilon = 0.622
 #============================================================================
 class soundingdata(dict):
   def __init__(self,P,T,Td,H=None,WS=None,WD=None,U=None,V=None,N=1000):
+    """P [hPa], T [C], Td [C], H [m]"""
     self['P' ] = np.array(P ,dtype=float)
     self['T' ] = np.array(T ,dtype=float)
     self['Td'] = np.array(Td,dtype=float)
@@ -42,6 +43,7 @@ class soundingdata(dict):
     
     WS850,WD850,WS500,WD500=0.,0.,0.,0.
 
+    T850, Td850 = np.nan, np.nan
     i = 0
     if 850. in P:
       i, = np.where(P==850.)[0]
@@ -55,6 +57,7 @@ class soundingdata(dict):
           Td850 = inter_logpT(P[i],Td[i],P[i+1],Td[i+1],850.)
           break
 
+    T700, Td700 = np.nan, np.nan
     if 700. in P:
       i, = np.where(P==700.)[0]
       T700, Td700  = T[i],Td[i]
@@ -65,6 +68,7 @@ class soundingdata(dict):
           Td700 = inter_logpT(P[i],Td[i],P[i+1],Td[i+1],700.)
           break
 
+    T500, Td500 = np.nan, np.nan
     if 500. in P:
       i, = np.where(P==500.)[0]
       T500, Td500  = T[i],Td[i]
@@ -98,7 +102,7 @@ class soundingdata(dict):
       if self['TTI']>49.:
         SWEAT += 20*(self['TTI']-49.)
       if     (WD850>=130.) and (WD850<=250.) and (WD500>=210.) and (WD500<=310.) \
-         and (WS850>=15.  ) and (WS500>=15.):
+          and (WS850>=15.  ) and (WS500>=15.):
         SWEAT += 125*(np.sin(np.deg2rad(WD500-WD850))+0.2)
     else:
       warnings.warn('No wind fields, skip computing SWEAT.')
@@ -293,17 +297,30 @@ class parcel(dict):
 
     # insert LCL
     if self['hasLCL']:
-      i = np.where(P_a-Plcl<0.)[0][0]
-      ilcl = i.copy()
-      if self['hasH']:
-        Hlcl = inter_hydH(P_a[i-1:i+1],T_e_c[i-1:i+1],H_a[i-1:i+1],Plcl,Tlcl)
-        H_a   = np.insert(H_a,ilcl,Hlcl)
-        self['LCL']['H'] = H_a[ilcl]
-      T_e_c = np.insert(T_e_c,ilcl,inter_logpT(P_a[i-1],T_e_c[i-1],P_a[i],T_e_c[i],Plcl))
-      P_a   = np.insert(P_a  ,ilcl,Plcl)
-      T_a_c = np.insert(T_a_c,ilcl,Tlcl)
-      self['LCL']['P'] = P_a  [ilcl]
-      self['LCL']['T'] = T_a_c[ilcl]
+      i = np.where(P_a-Plcl<0.)[0]
+      if i.shape[0] != 0:
+        i = i[0]
+        ilcl = i.copy()
+        if self['hasH']:
+          Hlcl = inter_hydH(P_a[i-1:i+1],T_e_c[i-1:i+1],H_a[i-1:i+1],Plcl,Tlcl)
+          H_a   = np.insert(H_a,ilcl,Hlcl)
+          self['LCL']['H'] = H_a[ilcl]
+        T_e_c = np.insert(T_e_c,ilcl,inter_logpT(P_a[i-1],T_e_c[i-1],P_a[i],T_e_c[i],Plcl))
+        P_a   = np.insert(P_a  ,ilcl,Plcl)
+        T_a_c = np.insert(T_a_c,ilcl,Tlcl)
+        self['LCL']['P'] = P_a  [ilcl]
+        self['LCL']['T'] = T_a_c[ilcl]
+      else:
+        i = P_a.shape[0]
+        ilcl = np.copy(i)
+        if self['hasH']:
+          Hlcl = hyd(P_a[-1],T_e_c[-1],Plcl,Tlcl,H_a[-1],'P')
+          H_a  = np.append(H_a,Hlcl)
+        T_e_c = np.append(T_e_c,np.nan)
+        P_a   = np.append(P_a  ,Plcl)
+        T_a_c = np.append(T_a_c,Tlcl)
+        self['LCL']['P'] = P_a  [ilcl]
+        self['LCL']['T'] = T_a_c[ilcl]
 
       # insert LFC
       i, = np.where(T_a_c[ilcl+1:]-T_e_c[ilcl+1:]>=0.)
@@ -352,7 +369,6 @@ class parcel(dict):
             self['EL']['H'] = H_a[iel]
           self['CAPE'] = energy(P_a[ilfc:iel +1],T_a_c[ilfc:iel +1],T_e_c[ilfc:iel +1],H_a[ilfc:iel +1])
 
-
     self['P'] = P_a
     self['T'] = T_a_c
   #--------------------------------------------------------------------------
@@ -394,10 +410,13 @@ def wd2uv(inws,inwd):
   return [u,v]
 #%%--------------------------------------------------------------------
 def vp2mr(P,Pv):
+  # P and Pv in hPa
   return epsilon*Pv/(P-Pv)
 #%%---------------------------------------------------------------------
 def vp2sh(P,Pv):
-  return epsilon*Pv/(P-(1.-epsilon)*Pv)
+  # P and Pv in hPa
+  # 0.378 = 1-epsilon
+  return epsilon*Pv/(P-0.378*Pv)
 #%%---------------------------------------------------------------------
 def satured_vapor(T):
   # T   in C
